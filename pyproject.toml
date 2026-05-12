@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "code-review-agent"
+version = "0.1.0"
+description = "AI 代码评审智能体，支持生成 HTML 评审报告"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1.0",
+    "pyyaml>=6.0",
+    "openai>=1.0",
+    "anthropic>=0.20.0",
+    "gitpython>=3.1.0",
+    "jinja2>=3.1.0",
+    "aiohttp>=3.9.0",
+    "tiktoken>=0.5.0",
+]
+
+[project.scripts]
+code-review = "src.cli:main"

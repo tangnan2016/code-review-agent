@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>代码审查报告</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: #f0f2f5;
+      color: #1a202c;
+      line-height: 1.6;
+      padding: 24px 16px;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    /* ---- 头部 ---- */
+    .header {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: #fff;
+      padding: 36px 40px;
+      border-radius: 14px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35);
+    }
+    .header h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 10px; }
+    .header .meta { display: flex; flex-wrap: wrap; gap: 16px; opacity: .88; font-size: .9rem; }
+    .header .meta span { display: flex; align-items: center; gap: 6px; }
+
+    /* ---- 统计卡片 ---- */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .stat-card {
+      background: #fff;
+      padding: 22px 16px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      border-top: 4px solid transparent;
+      cursor: pointer;
+      user-select: none;
+      transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+    }
+    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
+    .stat-card .number { font-size: 2.25rem; font-weight: 800; margin-bottom: 4px; }
+    .stat-card .label  { font-size: .78rem; color: #718096; text-transform: uppercase; letter-spacing: .04em; }
+
+    .stat-card.total    { border-top-color: #4f46e5; } .stat-card.total    .number { color: #4f46e5; }
+    .stat-card.critical { border-top-color: #e53e3e; } .stat-card.critical .number { color: #e53e3e; }
+    .stat-card.error    { border-top-color: #dd6b20; } .stat-card.error    .number { color: #dd6b20; }
+    .stat-card.warning  { border-top-color: #d69e2e; } .stat-card.warning  .number { color: #d69e2e; }
+    .stat-card.info     { border-top-color: #3182ce; } .stat-card.info     .number { color: #3182ce; }
+
+    /* 过滤激活态：未选中的卡片变灰，选中的高亮 */
+    .stats.is-filtered .stat-card           { opacity: .4; }
+    .stats.is-filtered .stat-card.active    { opacity: 1; transform: translateY(-3px); }
+    .stat-card.total.active    { box-shadow: 0 6px 20px rgba(79,70,229,.3);  outline: 2px solid #4f46e5; outline-offset: -2px; }
+    .stat-card.critical.active { box-shadow: 0 6px 20px rgba(229,62,62,.3);  outline: 2px solid #e53e3e; outline-offset: -2px; }
+    .stat-card.error.active    { box-shadow: 0 6px 20px rgba(221,107,32,.3); outline: 2px solid #dd6b20; outline-offset: -2px; }
+    .stat-card.warning.active  { box-shadow: 0 6px 20px rgba(214,158,46,.3); outline: 2px solid #d69e2e; outline-offset: -2px; }
+    .stat-card.info.active     { box-shadow: 0 6px 20px rgba(49,130,206,.3); outline: 2px solid #3182ce; outline-offset: -2px; }
+
+    /* ---- 过滤提示条 ---- */
+    #filter-bar {
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px 20px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      font-size: .88rem;
+      color: #4a5568;
+    }
+    #filter-bar.hidden { display: none; }
+    #filter-label { font-weight: 700; }
+    #clear-filter {
+      margin-left: auto;
+      background: none;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 3px 12px;
+      cursor: pointer;
+      font-size: .8rem;
+      color: #718096;
+      transition: background .15s;
+    }
+    #clear-filter:hover { background: #f7f8fa; color: #4a5568; }
+
+    /* ---- 文件区块 ---- */
+    .file-section {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      overflow: hidden;
+    }
+    .file-section.filtered-out { display: none; }
+    .file-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      background: #f7f8fa;
+      border-bottom: 1px solid #e2e8f0;
+      cursor: pointer;
+      user-select: none;
+      gap: 12px;
+    }
+    .file-header:hover { background: #edf2f7; }
+    .file-name {
+      font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+      font-size: .88rem;
+      font-weight: 600;
+      color: #2d3748;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toggle-icon {
+      display: inline-block;
+      font-size: .65rem;
+      color: #a0aec0;
+      transition: transform .25s ease;
+      flex-shrink: 0;
+    }
+    .file-section.open .toggle-icon { transform: rotate(90deg); }
+
+    .badge-group { display: flex; flex-wrap: wrap; gap: 5px; flex-shrink: 0; }
+    .badge { padding: 2px 9px; border-radius: 20px; font-size: .72rem; font-weight: 600; white-space: nowrap; }
+    .badge.critical { background: #fff5f5; color: #c53030; }
+    .badge.error    { background: #fffaf0; color: #c05621; }
+    .badge.warning  { background: #fffff0; color: #b7791f; }
+    .badge.info     { background: #ebf8ff; color: #2b6cb0; }
+    .badge.category { background: #f1f5f9; color: #4a5568; }
+
+    /* 折叠面板 */
+    .file-issues { max-height: 0; overflow: hidden; transition: max-height .3s ease; }
+    .file-section.open .file-issues { max-height: 9999px; }
+    .issue-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ---- 问题卡片 ---- */
+    .issue-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      border-left: 4px solid;
+    }
+    .issue-card.filtered-out { display: none; }
+    .issue-card.critical { border-left-color: #e53e3e; background: #fffafa; }
+    .issue-card.error    { border-left-color: #dd6b20; background: #fffcf9; }
+    .issue-card.warning  { border-left-color: #d69e2e; background: #fffff9; }
+    .issue-card.info     { border-left-color: #3182ce; background: #f7fbff; }
+
+    .issue-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 7px; }
+    .issue-title h4 { font-size: .93rem; font-weight: 600; flex: 1; min-width: 0; }
+
+    .severity-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .severity-dot.critical { background: #e53e3e; }
+    .severity-dot.error    { background: #dd6b20; }
+    .severity-dot.warning  { background: #d69e2e; }
+    .severity-dot.info     { background: #3182ce; }
+
+    .issue-meta        { font-size: .8rem; color: #718096; margin-bottom: 7px; }
+    .issue-description { font-size: .88rem; color: #4a5568; margin-bottom: 8px; }
+
+    .issue-suggestion {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      border-radius: 7px;
+      padding: 9px 13px;
+      font-size: .84rem;
+      color: #276749;
+    }
+    .issue-suggestion::before { content: "💡 建议："; font-weight: 700; }
+
+    /* ---- 无问题 ---- */
+    .no-issues {
+      text-align: center;
+      padding: 64px 20px;
+      color: #38a169;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+    }
+    .no-issues .emoji { font-size: 3.5rem; margin-bottom: 16px; }
+    .no-issues h2 { font-size: 1.4rem; margin-bottom: 8px; }
+    .no-issues p  { color: #718096; }
+
+    /* ---- 页脚 ---- */
+    .footer { text-align: center; padding: 28px 20px; color: #a0aec0; font-size: .82rem; }
+
+    @media (max-width: 640px) {
+      .header { padding: 24px 20px; }
+      .stats  { grid-template-columns: repeat(3, 1fr); }
+      .file-header { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>&#128269; 代码审查报告</h1>
+    <div class="meta">
+      <span>&#128193; ${repo_source}</span>
+      <span>&#128197; ${generated_at}</span>
+      <span>&#9201; ${elapsed}s</span>
+    </div>
+  </div>
+
+  <!-- 统计卡片（可点击过滤） -->
+  <div class="stats" id="stats-bar">
+    <div class="stat-card total" data-filter="all">
+      <div class="number">${total_issues}</div>
+      <div class="label">总问题数</div>
+    </div>
+    <div class="stat-card critical" data-filter="critical">
+      <div class="number">${critical_count}</div>
+      <div class="label">&#128308; 严重</div>
+    </div>
+    <div class="stat-card error" data-filter="error">
+      <div class="number">${error_count}</div>
+      <div class="label">&#128992; 错误</div>
+    </div>
+    <div class="stat-card warning" data-filter="warning">
+      <div class="number">${warning_count}</div>
+      <div class="label">&#128993; 警告</div>
+    </div>
+    <div class="stat-card info" data-filter="info">
+      <div class="number">${info_count}</div>
+      <div class="label">&#128309; 建议</div>
+    </div>
+  </div>
+
+  <!-- 过滤提示条 -->
+  <div id="filter-bar" class="hidden">
+    &#128269; 当前筛选：<strong id="filter-label"></strong>
+    <button id="clear-filter">&#10005; 清除筛选</button>
+  </div>
+
+  <!-- 文件问题列表 -->
+  <div id="issues-container">
+    ${file_sections}
+  </div>
+
+  <div class="footer">
+    由 AI Code Review Agent 生成 &nbsp;|&nbsp;
+    审查文件：${total_files} &nbsp;|&nbsp;
+    代码片段：${total_chunks}
+  </div>
+
+</div>
+<script>
+  var currentFilter = 'all';
+
+  var FILTER_LABELS = {
+    'critical': '&#128308; 严重',
+    'error':    '&#128992; 错误',
+    'warning':  '&#128993; 警告',
+    'info':     '&#128309; 建议'
+  };
+
+  function applyFilter(filter) {
+    currentFilter = filter;
+    var statsBar    = document.getElementById('stats-bar');
+    var filterBar   = document.getElementById('filter-bar');
+    var filterLabel = document.getElementById('filter-label');
+
+    // 更新卡片激活状态
+    document.querySelectorAll('.stat-card').forEach(function(card) {
+      card.classList.toggle('active', card.dataset.filter === filter);
+    });
+
+    if (filter === 'all') {
+      statsBar.classList.remove('is-filtered');
+      filterBar.classList.add('hidden');
+      // 恢复全部显示，不改变折叠/展开状态
+      document.querySelectorAll('.issue-card').forEach(function(c) {
+        c.classList.remove('filtered-out');
+      });
+      document.querySelectorAll('.file-section').forEach(function(sec) {
+        sec.classList.remove('filtered-out');
+      });
+    } else {
+      statsBar.classList.add('is-filtered');
+      filterBar.classList.remove('hidden');
+      filterLabel.innerHTML = FILTER_LABELS[filter] || filter;
+
+      document.querySelectorAll('.file-section').forEach(function(sec) {
+        var cards = sec.querySelectorAll('.issue-card');
+        var visibleCount = 0;
+        cards.forEach(function(card) {
+          var show = card.classList.contains(filter);
+          card.classList.toggle('filtered-out', !show);
+          if (show) visibleCount++;
+        });
+        if (visibleCount === 0) {
+          sec.classList.add('filtered-out');
+        } else {
+          sec.classList.remove('filtered-out');
+          sec.classList.add('open'); // 自动展开含匹配问题的文件
+        }
+      });
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    // 统计卡片点击：再次点击同一张则取消过滤
+    document.querySelectorAll('.stat-card').forEach(function(card) {
+      card.addEventListener('click', function() {
+        var f = this.dataset.filter;
+        applyFilter((currentFilter === f && f !== 'all') ? 'all' : f);
+      });
+    });
+
+    // 清除筛选按钮
+    document.getElementById('clear-filter').addEventListener('click', function() {
+      applyFilter('all');
+    });
+
+    // 文件区块折叠/展开
+    document.querySelectorAll('.file-header').forEach(function(header) {
+      header.addEventListener('click', function() {
+        header.closest('.file-section').classList.toggle('open');
+      });
+    });
+  });
+</script>
+</body>
+</html>

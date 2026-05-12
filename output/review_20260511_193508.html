@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>代码审查报告</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: #f0f2f5;
+      color: #1a202c;
+      line-height: 1.6;
+      padding: 24px 16px;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    /* ---- 头部 ---- */
+    .header {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: #fff;
+      padding: 36px 40px;
+      border-radius: 14px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 24px rgba(79, 70, 229, 0.35);
+    }
+    .header h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 10px; }
+    .header .meta { display: flex; flex-wrap: wrap; gap: 16px; opacity: .88; font-size: .9rem; }
+    .header .meta span { display: flex; align-items: center; gap: 6px; }
+
+    /* ---- 统计卡片 ---- */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #fff;
+      padding: 22px 16px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      border-top: 4px solid transparent;
+    }
+    .stat-card .number { font-size: 2.25rem; font-weight: 800; margin-bottom: 4px; }
+    .stat-card .label  { font-size: .78rem; color: #718096; text-transform: uppercase; letter-spacing: .04em; }
+    .stat-card.total   { border-top-color: #4f46e5; } .stat-card.total   .number { color: #4f46e5; }
+    .stat-card.critical{ border-top-color: #e53e3e; } .stat-card.critical .number { color: #e53e3e; }
+    .stat-card.error   { border-top-color: #dd6b20; } .stat-card.error   .number { color: #dd6b20; }
+    .stat-card.warning { border-top-color: #d69e2e; } .stat-card.warning .number { color: #d69e2e; }
+    .stat-card.info    { border-top-color: #3182ce; } .stat-card.info    .number { color: #3182ce; }
+
+    /* ---- 文件区块 ---- */
+    .file-section {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+      overflow: hidden;
+    }
+    .file-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 20px;
+      background: #f7f8fa;
+      border-bottom: 1px solid #e2e8f0;
+      cursor: pointer;
+      user-select: none;
+      gap: 12px;
+    }
+    .file-header:hover { background: #edf2f7; }
+    .file-name {
+      font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+      font-size: .88rem;
+      font-weight: 600;
+      color: #2d3748;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toggle-icon {
+      display: inline-block;
+      font-size: .65rem;
+      color: #a0aec0;
+      transition: transform .25s ease;
+      flex-shrink: 0;
+    }
+    .file-section.open .toggle-icon { transform: rotate(90deg); }
+
+    .badge-group { display: flex; flex-wrap: wrap; gap: 5px; flex-shrink: 0; }
+    .badge {
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: .72rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge.critical { background: #fff5f5; color: #c53030; }
+    .badge.error    { background: #fffaf0; color: #c05621; }
+    .badge.warning  { background: #fffff0; color: #b7791f; }
+    .badge.info     { background: #ebf8ff; color: #2b6cb0; }
+    .badge.category { background: #f1f5f9; color: #4a5568; }
+
+    /* 折叠面板 */
+    .file-issues {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height .3s ease;
+    }
+    .file-section.open .file-issues { max-height: 9999px; }
+
+    .issue-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+
+    /* ---- 问题卡片 ---- */
+    .issue-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      border-left: 4px solid;
+    }
+    .issue-card.critical { border-left-color: #e53e3e; background: #fffafa; }
+    .issue-card.error    { border-left-color: #dd6b20; background: #fffcf9; }
+    .issue-card.warning  { border-left-color: #d69e2e; background: #fffff9; }
+    .issue-card.info     { border-left-color: #3182ce; background: #f7fbff; }
+
+    .issue-title {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .issue-title h4 { font-size: .93rem; font-weight: 600; flex: 1; min-width: 0; }
+
+    .severity-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .severity-dot.critical { background: #e53e3e; }
+    .severity-dot.error    { background: #dd6b20; }
+    .severity-dot.warning  { background: #d69e2e; }
+    .severity-dot.info     { background: #3182ce; }
+
+    .issue-meta        { font-size: .8rem; color: #718096; margin-bottom: 7px; }
+    .issue-description { font-size: .88rem; color: #4a5568; margin-bottom: 8px; }
+
+    .issue-suggestion {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      border-radius: 7px;
+      padding: 9px 13px;
+      font-size: .84rem;
+      color: #276749;
+    }
+    .issue-suggestion::before { content: "💡 建议："; font-weight: 700; }
+
+    /* ---- 无问题 ---- */
+    .no-issues {
+      text-align: center;
+      padding: 64px 20px;
+      color: #38a169;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+    }
+    .no-issues .emoji { font-size: 3.5rem; margin-bottom: 16px; }
+    .no-issues h2     { font-size: 1.4rem; margin-bottom: 8px; }
+    .no-issues p      { color: #718096; }
+
+    /* ---- 页脚 ---- */
+    .footer {
+      text-align: center;
+      padding: 28px 20px;
+      color: #a0aec0;
+      font-size: .82rem;
+    }
+
+    @media (max-width: 640px) {
+      .header { padding: 24px 20px; }
+      .stats   { grid-template-columns: repeat(3, 1fr); }
+      .file-header { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>&#128269; 代码审查报告</h1>
+    <div class="meta">
+      <span>&#128193; /Users/tangnan04/PycharmProjects/code-review-agent</span>
+      <span>&#128197; 2026-05-11 19:35:08</span>
+      <span>&#9201; 0s</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-card total">
+      <div class="number">33</div>
+      <div class="label">总问题数</div>
+    </div>
+    <div class="stat-card critical">
+      <div class="number">0</div>
+      <div class="label">严重</div>
+    </div>
+    <div class="stat-card error">
+      <div class="number">5</div>
+      <div class="label">错误</div>
+    </div>
+    <div class="stat-card warning">
+      <div class="number">15</div>
+      <div class="label">警告</div>
+    </div>
+    <div class="stat-card info">
+      <div class="number">13</div>
+      <div class="label">建议</div>
+    </div>
+  </div>
+
+  <div class="file-section open">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/main.py    </span>    <div class="badge-group"><span class="badge error">1 错误</span><span class="badge warning">1 警告</span><span class="badge info">2 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card error">  <div class="issue-title">    <span class="severity-dot error"></span>    <h4>缺少异常处理</h4>    <span class="badge error">错误</span>    <span class="badge category">BestPractice</span>  </div>  <div class="issue-meta">&#128205; 行 42 – 91</div>  <div class="issue-description">整个主流程未捕获任何异常，若配置加载、仓库克隆、代码审查或报告生成任一环节失败，将导致程序崩溃且可能留下临时文件等未清理资源</div>  <div class="issue-suggestion">使用 try-except 块捕获异常，记录详细日志，并在 finally 中执行清理操作</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>克隆的远程仓库可能未清理</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 106 – 106</div>  <div class="issue-description">clone_and_scan 函数可能将远程仓库克隆到临时目录，但代码未显式清理该目录，长期运行可能造成磁盘空间泄漏</div>  <div class="issue-suggestion">在审查完成后删除临时目录，或使用上下文管理器确保资源释放</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>硬编码字符串多处重复</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 45 – 53</div>  <div class="issue-description">字符串 &#x27;llm&#x27;、&#x27;output&#x27;、&#x27;scanner&#x27; 等多次出现，增加拼写错误风险和修改成本</div>  <div class="issue-suggestion">将这些键定义为模块级常量（如 LLM_KEY = &#x27;llm&#x27;），统一引用</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>代码源路径未做校验</h4>    <span class="badge info">建议</span>    <span class="badge category">Security</span>  </div>  <div class="issue-meta">&#128205; 行 105 – 105</div>  <div class="issue-description">source 参数直接传递给 scan_local_repo 或 clone_and_scan，未对路径进行合法性检查，存在路径遍历风险</div>  <div class="issue-suggestion">在 _load_files 入口处增加路径规范性校验，拒绝包含 &#x27;..&#x27; 等危险字符的路径</div></div></div>  </div></div><div class="file-section open">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/report/report_generator.py    </span>    <div class="badge-group"><span class="badge error">1 错误</span><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card error">  <div class="issue-title">    <span class="severity-dot error"></span>    <h4>实例方法缺少 self 参数或 @staticmethod 装饰器</h4>    <span class="badge error">错误</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 170 – 201</div>  <div class="issue-description">方法 `_build_issue_card` 定义在类内部，但没有 `self` 参数，且未使用 `@staticmethod` 装饰。如果通过实例调用，将导致传入多余的 self 参数，引发运行时错误。</div>  <div class="issue-suggestion">如果该方法不需要访问实例，请添加 @staticmethod 装饰器；否则请添加 self 参数并将调用方式改为实例方法。</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>模板变量未作转义，可能存在 XSS 风险</h4>    <span class="badge warning">警告</span>    <span class="badge category">Security</span>  </div>  <div class="issue-meta">&#128205; 行 216 – 465</div>  <div class="issue-description">HTML 模板中使用了 `{repo_source}`、`{generated_at}` 等占位符，若外部传入的值包含 HTML 特殊字符，直接通过 `str.format()` 填充会导致跨站脚本攻击。</div>  <div class="issue-suggestion">在生成报告时，对所有插入模板的字符串值使用 `escape_html()` 进行转义，或确保数据源已做安全处理。</div></div></div>  </div></div><div class="file-section open">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/cli.py    </span>    <div class="badge-group"><span class="badge error">1 错误</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card error">  <div class="issue-title">    <span class="severity-dot error"></span>    <h4>LLM提供者拼写错误</h4>    <span class="badge error">错误</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 14 – 14</div>  <div class="issue-description">选项 `--provider` 的 Choice 列表中 &#x27;deepsek&#x27; 拼写错误，应为 &#x27;deepseek&#x27;，导致用户无法正确选择 DeepSeek 提供者。</div>  <div class="issue-suggestion">将 &#x27;deepsek&#x27; 改为 &#x27;deepseek&#x27;。</div></div></div>  </div></div><div class="file-section open">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/utils/config_loader.py    </span>    <div class="badge-group"><span class="badge error">1 错误</span><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card error">  <div class="issue-title">    <span class="severity-dot error"></span>    <h4>配置值类型未校验，易引发运行时报错</h4>    <span class="badge error">错误</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 38 – 69</div>  <div class="issue-description">_apply_env_overrides 方法中对 config 字典的嵌套结构（如 llm、providers、各 provider 配置项）未做类型检查。若 config.yml 中相关字段被配置为字符串、数字等非字典类型，setdefault 返回非字典对象，后续的字典操作如 .setdefault(...)、[key] 赋值或 .get() 将引发 AttributeError 或 TypeError，导致程序崩溃。例如 llm 本身可能是字符串，或 providers.openai 可能是字符串。</div>  <div class="issue-suggestion">在访问嵌套字典前，先验证父级值的类型。若类型不为 dict，可将其重置为 {} 或抛出明确的类型错误提示，确保后续操作安全。</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>配置文件路径未限制，可能导致路径遍历</h4>    <span class="badge warning">警告</span>    <span class="badge category">Security</span>  </div>  <div class="issue-meta">&#128205; 行 27 – 27</div>  <div class="issue-description">load 方法直接接受外部传入的 config_path 参数并用于文件访问，未对路径进行合法性验证或限制在安全基目录下，攻击者可能通过传入如 &#x27;../../etc/passwd&#x27; 的路径读取系统敏感文件。</div>  <div class="issue-suggestion">对 config_path 进行安全检查，例如使用 path.resolve() 并确保其位于预期的配置目录内，或限制只允许文件名而禁止路径分隔符。</div></div></div>  </div></div><div class="file-section open">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/repo/local_repo.py    </span>    <div class="badge-group"><span class="badge error">1 错误</span><span class="badge warning">2 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card error">  <div class="issue-title">    <span class="severity-dot error"></span>    <h4>config[&#x27;ignore_dirs&#x27;] 为 None 时会触发 TypeError</h4>    <span class="badge error">错误</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 46 – 46</div>  <div class="issue-description">config.get(&quot;ignore_dirs&quot;, []) 当 config 中存在键但值为 None 时返回 None，而 set(None) 会抛出 TypeError，导致程序崩溃。</div>  <div class="issue-suggestion">改用 config.get(&quot;ignore_dirs&quot;) or [] 或显式判断值是否为 None，确保总是获得可迭代对象。</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>扩展名大小写未统一可能导致匹配失败</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 44 – 68</div>  <div class="issue-description">extensions 集合可能包含大写扩展名（如 &quot;.PY&quot;），而文件扩展名已被转为小写（filepath.suffix.lower()），导致 in 比较失配，漏掉合法文件。</div>  <div class="issue-suggestion">在构建 extensions 集合时将所有元素转为小写，或在比较时确保双方均已小写。例如：extensions = {e.lower() for e in config.get(&quot;extensions&quot;, [&quot;.py&quot;])}。</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>os.walk 缺少错误回调，可能静默跳过不可读目录</h4>    <span class="badge warning">警告</span>    <span class="badge category">BestPractice</span>  </div>  <div class="issue-meta">&#128205; 行 60 – 60</div>  <div class="issue-description">os.walk 默认在遇到权限错误等异常时会静默跳过该目录，没有日志记录，导致扫描结果不完整且难以排查问题。</div>  <div class="issue-suggestion">为 os.walk 添加 onerror 参数，记录警告日志，例如：onerror=lambda err: logger.warning(f&quot;遍历目录出错: {err}&quot;)。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/analyzer/chunk_splitter.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>缺少参数校验</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 156 – 156</div>  <div class="issue-description">函数未检查max_lines参数，当max_lines&lt;=0时，range(0, total, max_lines)会抛出ValueError异常。</div>  <div class="issue-suggestion">在函数开头添加if max_lines &lt;= 0: raise ValueError(&quot;max_lines must be a positive integer&quot;)</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/report/logger.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span><span class="badge info">2 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>直接访问字典键可能导致 KeyError</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 39 – 42</div>  <div class="issue-description">在遍历 issues 时直接使用 issue[&#x27;severity&#x27;]、issue[&#x27;line_start&#x27;]、issue[&#x27;line_end&#x27;]、issue[&#x27;title&#x27;]，以及访问 counts 时直接使用 counts[&#x27;critical&#x27;] 等。若字典缺少相应键，程序将崩溃。</div>  <div class="issue-suggestion">使用 .get() 方法并提供默认值，或者在处理前验证字典结构，增加程序的健壮性。例如：issue.get(&#x27;severity&#x27;, &#x27;info&#x27;)、counts.get(&#x27;critical&#x27;, 0)。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>魔法数字</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 11 – 14</div>  <div class="issue-description">多处出现硬编码的宽度值 60（如第11、12、14、20、34、47行）以及第44行的截断长度 80。这些魔法数字降低了代码的可读性和可维护性。</div>  <div class="issue-suggestion">将宽度和截断长度定义为常量，例如：LINE_WIDTH = 60, DESC_TRUNCATE_LENGTH = 80。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>代码重复：分隔线打印</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 11 – 12</div>  <div class="issue-description">打印分隔线的逻辑（print(&quot;=&quot; * 60) 或类似）在函数中多次出现（第11、14、34、47行），存在不必要的重复。</div>  <div class="issue-suggestion">提取一个辅助函数如 print_separator(char=&#x27;=&#x27;, length=LINE_WIDTH) 来统一打印分隔线，减少重复并利于后续修改。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/repo/remote_repo.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>未限制 Git 克隆的传输协议</h4>    <span class="badge warning">警告</span>    <span class="badge category">Security</span>  </div>  <div class="issue-meta">&#128205; 行 28 – 28</div>  <div class="issue-description">直接使用用户提供的 URL 进行 git clone，未验证协议，可能接受 file:// 等非网络协议，导致攻击者读取或操作本地文件系统，存在路径遍历/信息泄露风险。</div>  <div class="issue-suggestion">在调用 clone_from 前，添加白名单校验，只允许 https、git@ 等安全协议，或使用 urllib.parse 解析 scheme 并限制为已知远程协议。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/llm/llm_factory.py    </span>    <div class="badge-group"><span class="badge warning">2 警告</span><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>硬编码默认提供者可能导致配置错误</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 17 – 17</div>  <div class="issue-description">默认提供者设置为 &#x27;deepseek&#x27;，如果 providers 配置中没有 deepseek，将抛出 ValueError，导致程序无法启动。这可能不是用户期望的行为。</div>  <div class="issue-suggestion">考虑不设置默认值，或从 providers 的第一个键推断默认提供者，避免与配置不一致。</div></div><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>API Key 检查仅豁免 ollama，不通用</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 31 – 36</div>  <div class="issue-description">当前只允许 ollama 提供者不配置 api_key。若将来需要支持其他本地模型或不需密钥的提供者，将强制要求不必要的密钥，导致误报错误。</div>  <div class="issue-suggestion">通过配置标识（如 requires_api_key）来决定是否必须提供 API Key，或维护一个不需要密钥的提供者列表。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>硬编码客户端映射不利于扩展</h4>    <span class="badge info">建议</span>    <span class="badge category">Maintainability</span>  </div>  <div class="issue-meta">&#128205; 行 38 – 41</div>  <div class="issue-description">客户端创建逻辑使用 if-else 分支硬编码，增加新提供者需要修改工厂函数，违反开闭原则。</div>  <div class="issue-suggestion">使用注册表模式，让每个客户端自行注册到字典中，由工厂根据 provider 名称动态查找对应的客户端类。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/analyzer/review_engine.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>大括号匹配未考虑字符串内花括号</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 200 – 209</div>  <div class="issue-description">在提取JSON对象时，通过计数大括号确定边界，但若JSON字符串值中包含&#x27;{&#x27;或&#x27;}&#x27;字符，会导致计数错误，返回的片段可能不是完整的JSON，进而导致后续解析失败。</div>  <div class="issue-suggestion">考虑使用JSON解码器进行部分验证，或采用更健壮的提取算法，如使用栈区分字符串内的括号。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      test/test_scanner.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>共享fixture中创建大文件降低测试速度</h4>    <span class="badge warning">警告</span>    <span class="badge category">Performance</span>  </div>  <div class="issue-meta">&#128205; 行 29 – 29</div>  <div class="issue-description">在sample_project fixture中创建了包含100000行的大文件，会导致所有使用该fixture的测试都耗时创建该文件，即使绝大部分测试不需要这个大文件。这会显著拖慢整个测试套件的执行速度。</div>  <div class="issue-suggestion">将大文件的创建移到真正需要它的测试函数（如test_exclude_large_files）内部，或改用更小的测试文件来验证文件大小过滤逻辑。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>魔法数字100000</h4>    <span class="badge info">建议</span>    <span class="badge category">Maintainability</span>  </div>  <div class="issue-meta">&#128205; 行 29 – 29</div>  <div class="issue-description">直接使用硬编码的100000作为大文件的行数，缺乏说明，降低代码可读性和可维护性。</div>  <div class="issue-suggestion">定义常量如LARGE_FILE_LINE_COUNT = 100000，或根据max_file_size_kb测试参数动态计算所需行数，让测试意图更清晰。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      test/test_chunk_splitter.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>测试可能未验证重叠行为</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 53 – 58</div>  <div class="issue-description">test_overlap 中仅在 len(chunks) &gt;= 2 时进行断言。如果分块数少于 2，测试会静默通过，无法验证重叠逻辑，可能导致假阳性。</div>  <div class="issue-suggestion">在条件判断前添加 &#x27;assert len(chunks) &gt;= 2, &quot;需要至少2个分块来验证重叠&quot;&#x27; 以确保测试有效。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>硬编码文件路径</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 12 – 12</div>  <div class="issue-description">fixture 中使用了 &#x27;/tmp/test.py&#x27; 作为 absolute_path，这依赖于 POSIX 文件系统，在 Windows 等环境下测试可能失败。</div>  <div class="issue-suggestion">使用 tempfile.gettempdir() 或直接使用不依赖平台的虚拟路径（如 &#x27;:/test.py&#x27;），避免平台依赖。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/utils/logger.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>Logger 与 Handler 日志级别不一致</h4>    <span class="badge warning">警告</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 9 – 13</div>  <div class="issue-description">logger 的级别被设置为 INFO (第9行)，而 handler 的级别被设置为 DEBUG (第13行)。由于 logger 的级别高于 handler，低于 INFO 的日志将被 logger 过滤，永远无法到达 handler，导致 handler 的 DEBUG 设置无效。</div>  <div class="issue-suggestion">将 handler 的级别设置为 INFO 或更高级别，或者将 logger 的级别也降低为 DEBUG，使两者保持一致，例如统一使用 INFO 级别。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/llm/base_client.py    </span>    <div class="badge-group"><span class="badge warning">1 警告</span><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card warning">  <div class="issue-title">    <span class="severity-dot warning"></span>    <h4>未验证关键配置参数</h4>    <span class="badge warning">警告</span>    <span class="badge category">BestPractice</span>  </div>  <div class="issue-meta">&#128205; 行 10 – 10</div>  <div class="issue-description">api_key 默认为空字符串，未进行有效性检查，可能导致运行时身份验证失败或安全漏洞。类似地，base_url 和 model 也未验证。</div>  <div class="issue-suggestion">在 __init__ 中检查 api_key 是否非空，必要时抛出异常或记录警告；考虑使用 pydantic 等库进行配置验证。</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>使用字典传递配置缺乏类型安全</h4>    <span class="badge info">建议</span>    <span class="badge category">Maintainability</span>  </div>  <div class="issue-meta">&#128205; 行 7 – 16</div>  <div class="issue-description">构造函数接受一个 dict 作为配置，没有明确指定哪些字段是必需的、可选的和预期的类型，降低了代码的可读性和维护性。</div>  <div class="issue-suggestion">将配置定义为单独的数据类或使用 TypedDict，或在文档中明确列出所有支持的键及其类型。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/report/helpers.py    </span>    <div class="badge-group"><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>统计可能遗漏未知的严重程度</h4>    <span class="badge info">建议</span>    <span class="badge category">Logic</span>  </div>  <div class="issue-meta">&#128205; 行 7 – 12</div>  <div class="issue-description">count_by_severity 函数预先定义了四种严重程度的计数器，如果 issues 中的某个条目的 severity 值不在预定义的四个键中（例如拼写错误或未来新增的类型），该条目会被静默忽略，导致最终计数不准确。</div>  <div class="issue-suggestion">建议使用 collections.defaultdict(int) 动态记录所有出现的 severity，或至少对未知的 severity 记录一条警告日志，以确保统计完整且可发现异常数据。</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/repo/__init__.py    </span>    <div class="badge-group"><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>建议使用相对导入</h4>    <span class="badge info">建议</span>    <span class="badge category">BestPractice</span>  </div>  <div class="issue-meta">&#128205; 行 2 – 3</div>  <div class="issue-description">当前采用绝对导入（from src.repo.xxx import ...），如果包名或目录结构发生变化，导入会失败。使用相对导入可以提高包的可移植性和可维护性。</div>  <div class="issue-suggestion">将导入改为相对导入，例如：from .local_repo import scan_local_repo</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      src/utils/__init__.py    </span>    <div class="badge-group"><span class="badge info">1 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>使用绝对导入而非相对导入</h4>    <span class="badge info">建议</span>    <span class="badge category">Maintainability</span>  </div>  <div class="issue-meta">&#128205; 行 2 – 3</div>  <div class="issue-description">在 __init__.py 中使用绝对导入（from src.utils.xxx import ...）会与包的实际位置强耦合，当包移动、重命名或 PYTHONPATH 设置不当可能导致导入失败。</div>  <div class="issue-suggestion">建议改用相对导入：from .config_loader import ConfigLoader 以及 from .logger import logger, setup_logger</div></div></div>  </div></div><div class="file-section ">  <div class="file-header">    <span class="file-name">      <span class="toggle-icon">&#9654;</span>      test/test_review_engine.py    </span>    <div class="badge-group"><span class="badge info">2 建议</span></div>  </div>  <div class="file-issues">    <div class="issue-list"><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>未使用的导入</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 4 – 4</div>  <div class="issue-description">导入了 AsyncMock 和 MagicMock，但在测试代码中未使用</div>  <div class="issue-suggestion">移除未使用的导入以保持代码整洁</div></div><div class="issue-card info">  <div class="issue-title">    <span class="severity-dot info"></span>    <h4>未使用的导入</h4>    <span class="badge info">建议</span>    <span class="badge category">Style</span>  </div>  <div class="issue-meta">&#128205; 行 6 – 6</div>  <div class="issue-description">导入了 ReviewIssue，但在测试代码中未使用</div>  <div class="issue-suggestion">移除未使用的导入</div></div></div>  </div></div>
+
+  <div class="footer">
+    由 AI Code Review Agent 生成 &nbsp;|&nbsp;
+    审查文件：25 &nbsp;|&nbsp;
+    代码片段：25
+  </div>
+
+</div>
+<script>
+  document.querySelectorAll('.file-header').forEach(function(header) {
+    header.addEventListener('click', function() {
+      header.closest('.file-section').classList.toggle('open');
+    });
+  });
+</script>
+</body>
+</html>

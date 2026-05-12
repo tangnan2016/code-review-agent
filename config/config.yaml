@@ -1,0 +1,84 @@
+# LLM 配置
+llm:
+  default_provider: "deepseek"
+  providers:
+    deepseek:
+      model: "deepseek-v4-pro"
+      api_key: "sk-823480131e9d4ac4bffe8a5e16db7b5d"
+      base_url: "https://api.deepseek.com"
+      temperature: 0.3
+      max_tokens: 4096
+      timeout: 300        # 高负载时单次请求最长等待秒数
+
+    openai:
+      model: "gpt-4o"
+      api_key: ""
+      base_url: ""
+      temperature: 0.3
+      max_tokens: 4096
+      timeout: 120
+
+    claude:
+      model: "claude-opus-4-5-20251101"
+      api_key: ""
+      temperature: 0.3
+      max_tokens: 4096
+      timeout: 120
+
+    ollama:
+      model: "llama3"
+      api_key: ""
+      base_url: "http://localhost:11434"
+      temperature: 0.3
+      max_tokens: 4096
+      timeout: 120
+
+# 代码分析配置
+analyzer:
+  concurrency: 5          # 并发请求数。DeepSeek 建议 2-3，OpenAI/Claude 可适当调高至 5
+  max_chunk_lines: 200    # 单次送审最大行数
+  overlap_lines: 20       # 分块重叠行数（保留上下文）
+  file_extensions:
+    - ".py"
+    - ".js"
+    - ".ts"
+    - ".java"
+    - ".go"
+    - ".rs"
+    - ".cpp"
+    - ".c"
+    - ".h"
+  ignore_patterns:
+    - "node_modules/"
+    - ".venv/"
+    - "__pycache__/"
+    - "*.min.js"
+    - "*.lock"
+
+# 报告配置
+report:
+  output_dir: "./reports"
+  format: "html"          # html / markdown / json
+  language: "zh"          # zh / en
+  title: "代码评审报告"
+
+# 评审维度
+review:
+  dimensions:
+    - name: "代码质量"
+      weight: 0.25
+      description: "代码可读性、命名规范、代码结构"
+    - name: "潜在缺陷"
+      weight: 0.30
+      description: "逻辑错误、边界条件、空指针、资源泄漏"
+    - name: "安全风险"
+      weight: 0.25
+      description: "注入漏洞、敏感信息泄露、权限问题"
+    - name: "性能问题"
+      weight: 0.20
+      description: "算法复杂度、内存使用、I/O 效率"
+  severity_levels:
+    - "critical"
+    - "major"
+    - "minor"
+    - "suggestion"

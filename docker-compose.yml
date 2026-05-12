@@ -1,0 +1,42 @@
+# ============================================================
+#  Code Review Agent - docker-compose.yml
+#
+#  快速启动：
+#    docker compose up -d
+#
+#  查看日志：
+#    docker compose logs -f
+#
+#  停止服务：
+#    docker compose down
+#
+#  环境变量说明（写入 .env 文件）：
+#    DEEPSEEK_API_KEY  / DEEPSEEK_MODEL    使用 DeepSeek
+#    OPENAI_API_KEY    / OPENAI_MODEL      使用 OpenAI
+#    ANTHROPIC_API_KEY / CLAUDE_MODEL      使用 Anthropic Claude
+#    OLLAMA_MODEL                          使用本地 Ollama（无需 Key）
+#    REVIEW_SOURCE_DIR  宿主机代码根目录（默认 $HOME）
+# ============================================================
+
+services:
+  code-review:
+    build: .
+    container_name: code-review-agent
+    ports:
+      - "8080:8080"
+    volumes:
+      # 将宿主机代码目录挂载进容器，路径在 MCP 工具调用时使用 /workspace/xxx
+      - "${REVIEW_SOURCE_DIR:-$HOME}:/workspace:ro"
+      # 生成的报告持久化到宿主机
+      - "./output:/app/output"
+      # 配置文件热更新（改 config.yaml 不需要重建镜像）
+      - "./config:/app/config:ro"
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
