@@ -40,7 +40,7 @@ cd code-review-agent
 pip install -r requirements.txt
 
 # 3. Configure your LLM provider — copy the example and edit
-cp env.example.txt .env
+cp env.example .env
 # Fill in your provider key and model (see Configuration section below)
 ```
 

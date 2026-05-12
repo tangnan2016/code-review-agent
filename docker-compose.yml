@@ -16,6 +16,9 @@
 #    ANTHROPIC_API_KEY / CLAUDE_MODEL      使用 Anthropic Claude
 #    OLLAMA_MODEL                          使用本地 Ollama（无需 Key）
 #    REVIEW_SOURCE_DIR  宿主机代码根目录（默认 $HOME）
+#    REVIEW_BASE_URL    对外可访问的服务地址，用于生成 HTML 报告链接
+#                       本机访问：http://127.0.0.1:8080
+#                       局域网/服务器部署：http://<宿主机IP>:8080
 # ============================================================
 
 services:
@@ -31,6 +34,10 @@ services:
       - "./output:/app/output"
       # 配置文件热更新（改 config.yaml 不需要重建镜像）
       - "./config:/app/config:ro"
+    environment:
+      # 报告可访问地址：修改为你实际访问服务的地址
+      # 本机：http://127.0.0.1:8080  局域网/云服务器：http://<IP>:8080
+      REVIEW_BASE_URL: "${REVIEW_BASE_URL:-http://127.0.0.1:8080}"
     env_file:
       - .env
     restart: unless-stopped

@@ -48,6 +48,8 @@ PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse, Response
 
 # ---------------------------------------------------------------------------
 # FastMCP 的 Settings 在实例化时就读取 FASTMCP_HOST / FASTMCP_PORT 环境变量。
@@ -75,6 +77,39 @@ else:
 
 _CONFIG_PATH = str(PROJECT_ROOT / "config" / "config.yaml")
 _OUTPUT_DIR = str(PROJECT_ROOT / "output")
+
+# HTML 报告通过 HTTP 提供访问时的 URL 前缀路径
+_REPORT_URL_PREFIX = "/reports"
+
+# SSE 模式下报告可访问的 base URL（由 main() 启动时写入）
+_SERVER_BASE_URL: str = ""
+
+
+# ------------------------------------------------------------------ #
+#  静态报告路由（SSE 模式下通过 HTTP 直接访问 HTML 报告）             #
+# ------------------------------------------------------------------ #
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> Response:
+    """Lightweight liveness probe — does NOT open an SSE stream."""
+    return JSONResponse({"status": "ok"})
+
+
+@mcp.custom_route(_REPORT_URL_PREFIX + "/{filename:path}", methods=["GET"])
+async def serve_report(request: Request) -> Response:
+    """Serve generated HTML/JSON reports over HTTP."""
+    filename = request.path_params["filename"]
+
+    # 安全：阻止路径穿越，确保只能访问 output 目录内的文件
+    output_root = Path(_OUTPUT_DIR).resolve()
+    file_path = (output_root / filename).resolve()
+    if not str(file_path).startswith(str(output_root)):
+        return Response("Forbidden", status_code=403)
+
+    if not file_path.exists() or not file_path.is_file():
+        return Response("Not Found", status_code=404)
+
+    return FileResponse(str(file_path))
 
 # 支持的 provider 配置表
 # api_key_env: 所需 API Key 环境变量（None = 本地服务，无需 Key）
@@ -174,13 +209,16 @@ def list_reports(limit: int = 10) -> str:
     result = []
     for r in reports:
         stat = r.stat()
-        result.append({
+        entry: dict = {
             "path": str(r),
             "name": r.name,
             "format": r.suffix.lstrip("."),
             "size_kb": round(stat.st_size / 1024, 1),
             "created_at": stat.st_mtime,
-        })
+        }
+        if _SERVER_BASE_URL and r.suffix == ".html":
+            entry["report_url"] = f"{_SERVER_BASE_URL}{_REPORT_URL_PREFIX}/{r.name}"
+        result.append(entry)
 
     return json.dumps({"reports": result}, ensure_ascii=False, indent=2)
 
@@ -281,7 +319,7 @@ async def _do_review(
     if not report_path:
         return json.dumps({"error": "未找到可审查的代码文件"}, ensure_ascii=False)
 
-    # JSON 报告直接返回内容；HTML 报告返回路径
+    # JSON 报告直接返回内容；HTML 报告返回路径 + 可访问 URL
     if output_format == "json":
         try:
             content = Path(report_path).read_text(encoding="utf-8")
@@ -290,10 +328,18 @@ async def _do_review(
         except Exception:
             pass
 
-    return json.dumps(
-        {"report_path": report_path, "message": f"报告已生成，请打开查看: {report_path}"},
-        ensure_ascii=False,
-    )
+    report_filename = Path(report_path).name
+    result: dict = {"report_path": report_path}
+
+    if _SERVER_BASE_URL:
+        # SSE 服务模式：拼接出可直接在浏览器打开的 URL
+        report_url = f"{_SERVER_BASE_URL.rstrip('/')}{_REPORT_URL_PREFIX}/{report_filename}"
+        result["report_url"] = report_url
+        result["message"] = f"报告已生成，点击链接在浏览器中查看: {report_url}"
+    else:
+        result["message"] = f"报告已生成，请打开文件查看: {report_path}"
+
+    return json.dumps(result, ensure_ascii=False)
 
 
 # ------------------------------------------------------------------ #
@@ -301,17 +347,42 @@ async def _do_review(
 # ------------------------------------------------------------------ #
 
 def main():
+    global _SERVER_BASE_URL
+
     parser = argparse.ArgumentParser(description="Code Review Agent MCP Server")
     parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
                         help="传输方式：stdio（默认，本地集成）或 sse（HTTP 服务）")
     parser.add_argument("--host", default="0.0.0.0", help="SSE 模式监听地址")
     parser.add_argument("--port", type=int, default=8080, help="SSE 模式监听端口")
+    parser.add_argument("--base-url", default="", dest="base_url",
+                        help="对外可访问的 base URL（用于生成报告链接，如 http://127.0.0.1:8080）"
+                             "。缺省时自动根据 host/port 推断。")
     args = parser.parse_args()
 
     if args.transport == "sse":
-        # host/port 已在模块级 FastMCP() 构造时通过 _server_args 传入，
-        # 直接读取 mcp.settings 确认实际绑定值。
-        print(f"Starting MCP SSE server on {mcp.settings.host}:{mcp.settings.port}", flush=True)
+        host = mcp.settings.host
+        port = mcp.settings.port
+
+        # 推断对外可访问的 base URL
+        # 优先级：--base-url CLI 参数 > REVIEW_BASE_URL 环境变量 > 自动推断
+        if args.base_url:
+            _SERVER_BASE_URL = args.base_url.rstrip("/")
+        elif os.environ.get("REVIEW_BASE_URL"):
+            _SERVER_BASE_URL = os.environ["REVIEW_BASE_URL"].rstrip("/")
+        else:
+            display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+            _SERVER_BASE_URL = f"http://{display_host}:{port}"
+
+        # 确保报告输出目录存在
+        output_dir = Path(_OUTPUT_DIR)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(
+            f"Starting MCP SSE server on {host}:{port}\n"
+            f"  MCP endpoint  : {_SERVER_BASE_URL}/sse\n"
+            f"  Reports served: {_SERVER_BASE_URL}{_REPORT_URL_PREFIX}/<filename>",
+            flush=True,
+        )
         mcp.run(transport="sse")
     else:
         mcp.run()  # stdio，用于 Claude Desktop 等本地客户端

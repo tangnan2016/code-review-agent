@@ -28,30 +28,6 @@ def _render_template(**kwargs) -> str:
     return re.sub(r'\$\{(\w+)\}', _replace, template)
 
 
-def _generate_json_report(
-        filepath: str,
-    issues: List[Dict],
-    source: str,
-    elapsed: float,
-    files_count: int,
-    chunks_count: int,
-):
-    counts = count_by_severity(issues)
-    report = {
-        "meta": {
-            "source": source,
-            "generated_at": datetime.now().isoformat(),
-            "elapsed_seconds": round(elapsed, 2),
-            "files_count": files_count,
-            "chunks_count": chunks_count,
-        },
-        "summary": {"total": len(issues), **counts},
-        "issues": issues,
-    }
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-
-
 class ReportGenerator:
     """报告生成器"""
 
@@ -95,12 +71,40 @@ class ReportGenerator:
         filepath = os.path.join(self.output_dir, filename)
 
         if self.output_format == "json":
-            _generate_json_report(filepath, issues, source, elapsed, files_count, chunks_count)
+            self._generate_json_report(filepath, issues, source, elapsed, files_count, chunks_count)
         else:
             self._generate_html_report(filepath, issues, source, elapsed, files_count, chunks_count)
 
         logger.info(f"报告已生成: {filepath}")
         return filepath
+
+    # ------------------------------------------------------------------ #
+    #  JSON                                                                #
+    # ------------------------------------------------------------------ #
+
+    def _generate_json_report(
+        self,
+        filepath: str,
+        issues: List[Dict],
+        source: str,
+        elapsed: float,
+        files_count: int,
+        chunks_count: int,
+    ):
+        counts = count_by_severity(issues)
+        report = {
+            "meta": {
+                "source": source,
+                "generated_at": datetime.now().isoformat(),
+                "elapsed_seconds": round(elapsed, 2),
+                "files_count": files_count,
+                "chunks_count": chunks_count,
+            },
+            "summary": {"total": len(issues), **counts},
+            "issues": issues,
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
 
     # ------------------------------------------------------------------ #
     #  HTML                                                                #
@@ -176,15 +180,16 @@ class ReportGenerator:
             f'</div>'
         )
 
-    def _build_issue_card(self: Dict) -> str:
+    @staticmethod
+    def _build_issue_card(issue: Dict) -> str:
         """构建单个问题卡片，使用 .get() 兜底，避免 KeyError"""
-        sev = self.get("severity", "info")
-        title = escape_html(self.get("title", "（无标题）"))
-        description = escape_html(self.get("description", ""))
-        category = escape_html(self.get("category", ""))
-        line_start = self.get("line_start", "-")
-        line_end = self.get("line_end", "-")
-        suggestion = self.get("suggestion", "")
+        sev = issue.get("severity", "info")
+        title = escape_html(issue.get("title", "（无标题）"))
+        description = escape_html(issue.get("description", ""))
+        category = escape_html(issue.get("category", ""))
+        line_start = issue.get("line_start", "-")
+        line_end = issue.get("line_end", "-")
+        suggestion = issue.get("suggestion", "")
 
         suggestion_html = (
             f'<div class="issue-suggestion">{escape_html(suggestion)}</div>'
