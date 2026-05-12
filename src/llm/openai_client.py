@@ -1,4 +1,4 @@
-"""OpenAI 兼容 API 客户端（支持 OpenAI、DeepSeek、Ollama 等）openai_client.py"""
+"""OpenAI 兼容 API 客户端（支持 OpenAI、DeepSeek、Ollama 等）"""
 import asyncio
 from typing import Optional
 
@@ -24,9 +24,9 @@ class OpenAIClient(BaseLLMClient):
 
     def _create_session(self) -> aiohttp.ClientSession:
         timeout = aiohttp.ClientTimeout(
-            total=120,
-            connect=10,      # 连接超时单独控制，避免无限等待
-            sock_read=90,
+            total=600,       # 慢模型（Qwen/DeepSeek 高负载时）需要更长等待
+            connect=15,      # 连接超时单独控制，避免无限等待
+            sock_read=540,   # 大文件 prompt 生成耗时较长（Qwen 可能超过 4 分钟）
         )
         headers = {"Content-Type": "application/json"}
         if self.api_key and self.api_key != "ollama":
@@ -69,12 +69,16 @@ class OpenAIClient(BaseLLMClient):
                 await asyncio.sleep(delay)
             except aiohttp.ClientError as e:
                 # 网络层错误：重建 session 后重试一次
+                # 保留原始异常类名，让上层 review_engine 能识别 SocketTimeoutError 等超时类型
                 logger.warning(f"网络错误，重建 session 后重试: {type(e).__name__}: {e}")
                 self._invalidate_session()
                 try:
                     return await self._do_request(url, payload)
                 except Exception as retry_exc:
-                    raise RuntimeError(f"网络错误重试仍失败: {type(retry_exc).__name__}: {retry_exc}") from retry_exc
+                    # 在消息中保留原始异常类名，便于上层超时检测
+                    raise RuntimeError(
+                        f"网络错误重试仍失败: {type(retry_exc).__name__}: {retry_exc}"
+                    ) from retry_exc
 
         # 逻辑上不可达，保险起见
         raise RuntimeError("请求异常退出")

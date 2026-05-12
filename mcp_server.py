@@ -8,7 +8,7 @@ Code Review Agent - MCP Server
   deepseek   DEEPSEEK_API_KEY        DEEPSEEK_MODEL              deepseek-coder
   openai     OPENAI_API_KEY          OPENAI_MODEL                gpt-4o
   claude     ANTHROPIC_API_KEY       CLAUDE_MODEL                claude-3-5-sonnet-20241022
-  ollama     （无需 Key，本地服务）     OLLAMA_MODEL                codellama
+  ollama     （无需 Key，本地服务）   OLLAMA_MODEL                codellama
 
 启动方式：
   stdio 模式（Claude Desktop / claude_desktop_config.json）：
@@ -37,6 +37,7 @@ Code Review Agent - MCP Server
 """
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -48,10 +49,29 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP(
-    name="code-review-agent",
-    description="AI 代码审查服务：对本地目录或 Git 仓库进行多维度代码质量分析，输出结构化审查报告。",
-)
+# ---------------------------------------------------------------------------
+# FastMCP 的 Settings 在实例化时就读取 FASTMCP_HOST / FASTMCP_PORT 环境变量。
+# 必须在 FastMCP() 之前把这两个值写入 os.environ，否则 main() 里再设就晚了。
+# 优先级：--host/--port 命令行参数 > FASTMCP_HOST/FASTMCP_PORT 已有环境变量 > 默认值
+# ---------------------------------------------------------------------------
+def _pre_parse_server_settings() -> argparse.Namespace:
+    """预解析 --transport / --host / --port，返回解析结果供模块级 FastMCP() 使用。"""
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument("--transport", default="stdio")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=8080)
+    args, _ = p.parse_known_args()
+    return args
+
+
+_server_args = _pre_parse_server_settings()   # 必须在 FastMCP() 前执行
+
+# FastMCP 的 host/port 通过构造函数传入（在 __init__ 时就固定到 self.settings 中）。
+# SSE 模式：绑定到 0.0.0.0:8080；stdio 模式：host/port 无实际意义，用默认值即可。
+if _server_args.transport == "sse":
+    mcp = FastMCP("code-review-agent", host=_server_args.host, port=_server_args.port)
+else:
+    mcp = FastMCP("code-review-agent")
 
 _CONFIG_PATH = str(PROJECT_ROOT / "config" / "config.yaml")
 _OUTPUT_DIR = str(PROJECT_ROOT / "output")
@@ -289,9 +309,13 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        mcp.run(transport="sse", host=args.host, port=args.port)
+        # host/port 已在模块级 FastMCP() 构造时通过 _server_args 传入，
+        # 直接读取 mcp.settings 确认实际绑定值。
+        print(f"Starting MCP SSE server on {mcp.settings.host}:{mcp.settings.port}", flush=True)
+        mcp.run(transport="sse")
     else:
         mcp.run()  # stdio，用于 Claude Desktop 等本地客户端
+
 
 
 if __name__ == "__main__":

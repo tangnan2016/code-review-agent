@@ -4,7 +4,7 @@ llm:
   providers:
     deepseek:
       model: "deepseek-v4-pro"
-      api_key: "sk-823480131e9d4ac4bffe8a5e16db7b5d"
+      api_key: "sk-x"
       base_url: "https://api.deepseek.com"
       temperature: 0.3
       max_tokens: 4096
