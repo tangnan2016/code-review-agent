@@ -37,7 +37,6 @@ Code Review Agent - MCP Server
 """
 
 import argparse
-import asyncio
 import json
 import os
 import sys
@@ -112,15 +111,78 @@ async def serve_report(request: Request) -> Response:
     return FileResponse(str(file_path))
 
 # 支持的 provider 配置表
-# api_key_env: 所需 API Key 环境变量（None = 本地服务，无需 Key）
-# model_env:   模型名称环境变量（优先级：调用参数 > 环境变量 > config.yaml > 内置默认值）
-# default_model: 内置默认模型（当以上三级均未指定时使用）
+# 内置 provider 元数据表（仅用于感知环境变量名和内置默认值，不代表"已配置"）
+# api_key_env:  对应的 API Key 环境变量名（None = 本地服务无需 Key）
+# model_env:    对应的模型名称环境变量名
+# default_model: 无任何环境变量时的兜底模型名
 _PROVIDERS: dict[str, dict] = {
-    "deepseek": {"api_key_env": "DEEPSEEK_API_KEY",  "model_env": "DEEPSEEK_MODEL",  "default_model": "deepseek-coder"},
+    "deepseek": {"api_key_env": "DEEPSEEK_API_KEY",  "model_env": "DEEPSEEK_MODEL",  "default_model": "deepseek-chat"},
     "openai":   {"api_key_env": "OPENAI_API_KEY",    "model_env": "OPENAI_MODEL",    "default_model": "gpt-4o"},
     "claude":   {"api_key_env": "ANTHROPIC_API_KEY", "model_env": "CLAUDE_MODEL",    "default_model": "claude-3-5-sonnet-20241022"},
-    "ollama":   {"api_key_env": None,                "model_env": "OLLAMA_MODEL",    "default_model": "codellama"},
+    "ollama":   {"api_key_env": None,                "model_env": "OLLAMA_MODEL",    "default_model": "llama3"},
 }
+
+
+def _detect_configured_providers() -> dict[str, dict]:
+    """
+    扫描当前环境变量，返回实际已配置的 provider 及其 model。
+
+    检测规则：
+      - 内置 provider（deepseek/openai/claude）：对应 API Key 环境变量已设置 → 已配置
+      - ollama：无需 Key，始终视为已配置（本地服务）
+      - 通用自定义 provider（LM_PROVIDER + LM_API_KEY）：同时设置 → 已配置
+
+    Returns:
+        {provider_name: {"model": str, "source": str}}
+    """
+    result: dict[str, dict] = {}
+
+    # 检测内置 provider
+    for name, meta in _PROVIDERS.items():
+        api_key_env = meta["api_key_env"]
+        model_env   = meta["model_env"]
+        default_model = meta["default_model"]
+
+        if api_key_env is None or os.environ.get(api_key_env):
+            model = os.environ.get(model_env, "") or default_model
+            result[name] = {"model": model, "source": "built-in"}
+
+    # 检测通用自定义 provider（LM_PROVIDER + LM_API_KEY）
+    lm_provider  = os.environ.get("LM_PROVIDER", "").strip()
+    lm_api_key   = os.environ.get("LM_API_KEY", "").strip()
+    lm_model     = os.environ.get("LLM_MODEL", "").strip()
+    lm_base_url  = os.environ.get("LM_BASE_URL", "").strip()
+
+    if lm_provider and lm_api_key:
+        # 自定义 provider 的 model：LLM_MODEL > 已有内置配置的 model > 空
+        model = lm_model or result.get(lm_provider, {}).get("model", "（请设置 LLM_MODEL）")
+        entry: dict = {"model": model, "source": "generic env vars (LM_*)"}
+        if lm_base_url:
+            entry["base_url"] = lm_base_url
+        result[lm_provider] = entry   # 覆盖同名内置 provider
+
+    return result
+
+
+def _resolve_provider(provider: str) -> str:
+    """
+    解析最终使用的 provider。优先级：
+      1. 调用方显式传入的 provider 参数
+      2. LM_PROVIDER 环境变量
+      3. 已配置的第一个非 ollama provider
+      4. ollama（如已配置）
+      5. 兜底返回空字符串（由 _check_provider 报错）
+    """
+    if provider:
+        return provider
+    lm_provider = os.environ.get("LM_PROVIDER", "").strip()
+    if lm_provider:
+        return lm_provider
+    configured = _detect_configured_providers()
+    for p in configured:
+        if p != "ollama":
+            return p
+    return next(iter(configured), "")
 
 
 # ------------------------------------------------------------------ #
@@ -130,39 +192,38 @@ _PROVIDERS: dict[str, dict] = {
 @mcp.tool()
 async def review_local_code(
     path: str,
-    provider: str = "deepseek",
+    provider: str = "",
     model: str = "",
-    output_format: str = "json",
+    output_format: str = "html",
 ) -> str:
     """
     对本地代码目录进行 AI 代码审查。
 
     Args:
         path:          要审查的本地目录绝对路径（如 /Users/xxx/my-project）
-        provider:      LLM 提供者，可选 deepseek / openai / claude / ollama（默认 deepseek）
-                       deepseek → 需环境变量 DEEPSEEK_API_KEY
-                       openai   → 需环境变量 OPENAI_API_KEY
-                       claude   → 需环境变量 ANTHROPIC_API_KEY
-                       ollama   → 本地服务，无需 Key
-        model:         模型名称；优先级：本参数 > 环境变量（如 DEEPSEEK_MODEL）> config.yaml > 内置默认值
-        output_format: 报告格式，json（返回结构化问题列表）或 html（生成可视化报告）
+        provider:      LLM 提供者。留空时自动使用已配置的 provider（优先 LM_PROVIDER 环境变量）。
+                       内置选项：deepseek / openai / claude / ollama
+                       自定义：任意名称（需配合 LM_API_KEY + LM_BASE_URL + LLM_MODEL 使用）
+        model:         模型名称；留空时使用该 provider 的已配置默认值
+        output_format: 报告格式，html（生成可视化报告）或 json（返回结构化问题列表）
 
     Returns:
         JSON 格式的审查摘要，包含问题列表和报告文件路径
     """
-    err = _check_provider(provider)
+    effective_provider = _resolve_provider(provider)
+    err = _check_provider(effective_provider, requested_model=model or None)
     if err:
         return err
-    return await _do_review(path, provider, model or None, output_format)
+    return await _do_review(path, effective_provider, model or None, output_format)
 
 
 @mcp.tool()
 async def review_git_repo(
     url: str,
     branch: str = "main",
-    provider: str = "deepseek",
+    provider: str = "",
     model: str = "",
-    output_format: str = "json",
+    output_format: str = "html",
 ) -> str:
     """
     对远程 Git 仓库进行 AI 代码审查（自动 clone 后审查）。
@@ -170,21 +231,20 @@ async def review_git_repo(
     Args:
         url:           Git 仓库地址（https:// 或 git@ 格式）
         branch:        分支名称（默认 main）
-        provider:      LLM 提供者，可选 deepseek / openai / claude / ollama
-                       deepseek → 需环境变量 DEEPSEEK_API_KEY
-                       openai   → 需环境变量 OPENAI_API_KEY
-                       claude   → 需环境变量 ANTHROPIC_API_KEY
-                       ollama   → 本地服务，无需 Key
-        model:         模型名称；优先级：本参数 > 环境变量（如 DEEPSEEK_MODEL）> config.yaml > 内置默认值
-        output_format: 报告格式，json 或 html
+        provider:      LLM 提供者。留空时自动使用已配置的 provider（优先 LM_PROVIDER 环境变量）。
+                       内置选项：deepseek / openai / claude / ollama
+                       自定义：任意名称（需配合 LM_API_KEY + LM_BASE_URL + LLM_MODEL 使用）
+        model:         模型名称；留空时使用该 provider 的已配置默认值
+        output_format: 报告格式，html（生成可视化报告）或 json（返回结构化问题列表）
 
     Returns:
         JSON 格式的审查摘要
     """
-    err = _check_provider(provider)
+    effective_provider = _resolve_provider(provider)
+    err = _check_provider(effective_provider, requested_model=model or None)
     if err:
         return err
-    return await _do_review(url, provider, model or None, output_format, branch=branch)
+    return await _do_review(url, effective_provider, model or None, output_format, branch=branch)
 
 
 @mcp.tool()
@@ -246,43 +306,94 @@ def get_report_content(report_path: str) -> str:
 @mcp.tool()
 def list_providers() -> str:
     """
-    列出所有支持的 LLM Provider 及配置方式。
+    列出当前实际已配置的 LLM provider 及其状态。
 
     Returns:
-        JSON 列表，包含 provider 名称、API Key 环境变量、模型环境变量、内置默认模型及当前配置状态
+        JSON，包含：已配置的 provider 列表、每个 provider 的 model、配置来源；
+        以及未配置但支持的内置 provider 列表（说明需要设置哪些环境变量）
     """
-    result = []
-    for name, cfg in _PROVIDERS.items():
-        api_key_env = cfg["api_key_env"]
-        model_env   = cfg["model_env"]
-        result.append({
-            "provider":      name,
-            "api_key_env":   api_key_env or "（无需配置，本地服务）",
-            "api_key_set":   True if api_key_env is None else bool(os.environ.get(api_key_env)),
-            "model_env":     model_env,
-            "model_set":     os.environ.get(model_env, ""),
-            "default_model": cfg["default_model"],
-        })
-    return json.dumps({"providers": result}, ensure_ascii=False, indent=2)
+    configured = _detect_configured_providers()
+
+    configured_list = []
+    for name, info in configured.items():
+        entry = {
+            "provider":  name,
+            "model":     info["model"],
+            "source":    info["source"],
+            "status":    "configured",
+        }
+        if "base_url" in info:
+            entry["base_url"] = info["base_url"]
+        configured_list.append(entry)
+
+    # 列出未配置的内置 provider，告知需要哪些环境变量
+    not_configured = []
+    for name, meta in _PROVIDERS.items():
+        if name not in configured:
+            api_key_env = meta["api_key_env"]
+            not_configured.append({
+                "provider":       name,
+                "status":         "not configured",
+                "requires_env":   api_key_env or "（无需 Key，本地服务）",
+                "optional_model_env": meta["model_env"],
+                "default_model":  meta["default_model"],
+            })
+
+    return json.dumps(
+        {
+            "configured": configured_list,
+            "not_configured": not_configured,
+            "tip": "留空 provider 参数时，自动使用第一个已配置的 provider",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 # ------------------------------------------------------------------ #
 #  内部实现                                                            #
 # ------------------------------------------------------------------ #
 
-def _check_provider(provider: str) -> str | None:
-    """校验 provider 是否合法，以及对应 Key 是否已注入。返回错误 JSON 或 None。"""
-    if provider not in _PROVIDERS:
+def _check_provider(provider: str, requested_model: str | None = None) -> str | None:
+    """
+    校验 provider 和 model 是否在当前配置中。
+    - provider 不在已配置列表 → 报错，列出已配置的 provider 和 model
+    - requested_model 非空且与配置 model 不符 → 警告（允许继续，model 由调用方控制）
+    """
+    if not provider:
         return json.dumps(
-            {"error": f"不支持的 provider: {provider!r}，可选值: {list(_PROVIDERS)}"},
+            {"error": "未能解析 provider，请检查 LM_PROVIDER 环境变量或显式传入 provider 参数"},
             ensure_ascii=False,
         )
-    api_key_env = _PROVIDERS[provider]["api_key_env"]
-    if api_key_env and not os.environ.get(api_key_env):
+
+    configured = _detect_configured_providers()
+
+    if not configured:
         return json.dumps(
-            {"error": f"使用 {provider} 需要设置环境变量 {api_key_env}"},
+            {
+                "error": "当前没有配置任何 LLM provider",
+                "how_to_configure": {
+                    "built-in": "设置 DEEPSEEK_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY 等",
+                    "custom":   "同时设置 LM_PROVIDER=<name> + LM_API_KEY=<key> + LM_BASE_URL=<url> + LLM_MODEL=<model>",
+                },
+            },
             ensure_ascii=False,
         )
+
+    if provider not in configured:
+        available = [
+            {"provider": p, "model": info["model"], "source": info["source"]}
+            for p, info in configured.items()
+        ]
+        return json.dumps(
+            {
+                "error": f"provider '{provider}' 未配置或不支持",
+                "available_providers": available,
+                "tip": f"如需使用 '{provider}'，请在 .env 中设置对应 API Key 或设置 LM_PROVIDER={provider} + LM_API_KEY=<key>",
+            },
+            ensure_ascii=False,
+        )
+
     return None
 
 
@@ -296,10 +407,10 @@ async def _do_review(
     """调用主流程并返回结构化结果。model 解析优先级：调用参数 > 环境变量 > config.yaml > 内置默认值"""
     from src.main import run_review
 
-    # 若调用方未指定 model，尝试从环境变量读取
+    # 若调用方未指定 model，从已配置 provider 中读取
     if not model:
-        cfg = _PROVIDERS.get(provider, {})
-        model = os.environ.get(cfg.get("model_env", ""), "") or cfg.get("default_model") or None
+        configured = _detect_configured_providers()
+        model = configured.get(provider, {}).get("model") or None
 
     try:
         report_path = await run_review(
